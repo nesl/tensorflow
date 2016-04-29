@@ -42,7 +42,7 @@ public class TensorflowImageListener implements OnImageAvailableListener {
 
   private static final boolean SAVE_PREVIEW_BITMAP = false;
 
-  private static final String MODEL_FILE = "file:///android_asset/tensorflow_inception_graph.pb";
+  private static final String MODEL_FILE = "file:///android_asset/example_graph_1.pb";
   private static final String LABEL_FILE =
       "file:///android_asset/imagenet_comp_graph_label_strings.txt";
 

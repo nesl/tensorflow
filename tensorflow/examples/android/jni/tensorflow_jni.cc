@@ -44,7 +44,7 @@ using namespace tensorflow;
 // Global variables that holds the Tensorflow classifier.
 static std::unique_ptr<tensorflow::Session> session;
 
-static std::vector<std::string> g_label_strings;
+static std::vector<std::string> g_label_strings({"still", "walking", "running", "weightlifting"});
 static bool g_compute_graph_initialized = false;
 //static mutex g_compute_graph_mutex(base::LINKER_INITIALIZED);
 
@@ -58,11 +58,11 @@ static int64 g_timing_total_us = 0;
 static Stat<int64> g_frequency_start;
 static Stat<int64> g_frequency_end;
 
-#ifdef LOG_DETAILED_STATS
-static const bool kLogDetailedStats = true;
-#else
-static const bool kLogDetailedStats = false;
-#endif
+// #ifdef LOG_DETAILED_STATS
+// static const bool kLogDetailedStats = true;
+// #else
+// static const bool kLogDetailedStats = false;
+// #endif
 
 // Improve benchmarking by limiting runs to predefined amount.
 // 0 (default) denotes infinite runs.
@@ -70,11 +70,17 @@ static const bool kLogDetailedStats = false;
 #define MAX_NUM_RUNS 0
 #endif
 
-#ifdef SAVE_STEP_STATS
+// #ifdef SAVE_STEP_STATS
+// static const bool kSaveStepStats = true;
+// #else
+// static const bool kSaveStepStats = false;
+// #endif
+
+static const bool kLogDetailedStats = true;
 static const bool kSaveStepStats = true;
-#else
-static const bool kSaveStepStats = false;
-#endif
+
+// Output name of tensors
+static std::vector<std::string> output_names;
 
 inline static int64 CurrentThreadTimeUs() {
   struct timeval tv;
@@ -87,6 +93,9 @@ TENSORFLOW_METHOD(initializeTensorflow)(
     JNIEnv* env, jobject thiz, jobject java_asset_manager,
     jstring model, jstring labels,
     jint num_classes, jint mognet_input_size, jint image_mean) {
+
+  LOG(INFO) << "In jni initializeTensorflow";
+
   g_num_runs = 0;
   g_timing_total_us = 0;
   g_frequency_start.Reset();
@@ -101,7 +110,7 @@ TENSORFLOW_METHOD(initializeTensorflow)(
   const int64 start_time = CurrentThreadTimeUs();
 
   const char* const model_cstr = env->GetStringUTFChars(model, NULL);
-  const char* const labels_cstr = env->GetStringUTFChars(labels, NULL);
+  // const char* const labels_cstr = env->GetStringUTFChars(labels, NULL);
 
   g_tensorflow_input_size = mognet_input_size;
   g_image_mean = image_mean;
@@ -135,14 +144,29 @@ TENSORFLOW_METHOD(initializeTensorflow)(
     return -1;
   }
 
+  // Print node count in the graph
+  int node_count = tensorflow_graph.node_size();
+  LOG(INFO) << node_count << " nodes in graph";
+
+  // Iterate all nodes to find tensor names
+  for(int i = 0; i < node_count; i++) {
+      auto n = tensorflow_graph.node(i);
+      // If name contains "assign_variables", add to vector
+      if(n.name().find("assign_variables") != std::string::npos) {
+          LOG(INFO) << i << ":" << n.name();
+          output_names.push_back(n.name());
+      }
+  }
+
   // Clear the proto to save memory space.
   tensorflow_graph.Clear();
   LOG(INFO) << "Tensorflow graph loaded from: " << model_cstr;
 
-  // Read the label list
-  ReadFileToVector(asset_manager, labels_cstr, &g_label_strings);
-  LOG(INFO) << g_label_strings.size() << " label strings loaded from: "
-            << labels_cstr;
+  // // Read the label list
+  // ReadFileToVector(asset_manager, labels_cstr, &g_label_strings);
+  // LOG(INFO) << g_label_strings.size() << " label strings loaded from: "
+  //           << labels_cstr;
+  
   g_compute_graph_initialized = true;
 
   const int64 end_time = CurrentThreadTimeUs();
@@ -253,7 +277,6 @@ static std::string ClassifyImage(const RGBA* const bitmap_src,
 
   VLOG(0) << "Start computing.";
   std::vector<tensorflow::Tensor> output_tensors;
-  std::vector<std::string> output_names({"output:0"});
 
   tensorflow::Status s;
   int64 start_time, end_time;
