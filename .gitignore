@@ -5,7 +5,7 @@ node_modules
 /bazel-ci_build-cache
 /bazel-genfiles
 /bazel-out
-/bazel-tensorflow
+/bazel-tensorflow*
 /bazel-testlogs
 /bazel-tf
 /tensorflow/contrib/cmake/build
