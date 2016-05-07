@@ -43,8 +43,14 @@ public class TensorflowClassifier implements Classifier {
 
     private native String classifyImageRgb(int[] output, int width, int height);
 
+    private native int classifyActivityAccRaw(int len, float[] acc);
+
     static {
         System.loadLibrary("tensorflow_demo");
+    }
+
+    public int recognizeActivity(int len, final float[] data) {
+        return classifyActivityAccRaw(len, data);
     }
 
     @Override

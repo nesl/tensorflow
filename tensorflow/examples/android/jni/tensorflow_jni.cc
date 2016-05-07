@@ -397,3 +397,16 @@ TENSORFLOW_METHOD(classifyImageBmp)(
 
   return env->NewStringUTF(result.c_str());
 }
+
+JNIEXPORT jint JNICALL
+TENSORFLOW_METHOD(classifyActivityAccRaw)(
+    JNIEnv* env, jobject thiz, jint len, jfloatArray acc) {
+
+  // Copy data into currFrame.
+  jboolean iCopied = JNI_FALSE;
+  jfloat* data = env->GetFloatArrayElements(acc, &iCopied);
+
+  LOG(INFO) << "In classifyActivityAccRaw: " << len;
+
+  return 1;
+}

@@ -44,6 +44,10 @@ JNIEXPORT jstring JNICALL
 TENSORFLOW_METHOD(classifyImageRgb)(
     JNIEnv* env, jobject thiz, jintArray image, jint width, jint height);
 
+JNIEXPORT jint JNICALL
+TENSORFLOW_METHOD(classifyActivityAccRaw)(
+    JNIEnv* env, jobject thiz, jint len, jfloatArray acc); 
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif  // __cplusplus

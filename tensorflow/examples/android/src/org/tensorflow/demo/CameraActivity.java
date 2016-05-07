@@ -22,6 +22,7 @@ import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.Button;
@@ -29,8 +30,12 @@ import android.widget.TextView;
 
 public class CameraActivity extends Activity implements View.OnClickListener, SensorEventListener {
     private static final String TAG = "SensorDemo";
-    private SensorManager sensorManager;
     private TextView mAccViewX, mAccViewY, mAccViewZ;
+
+    private static final int BUFFER_SIZE = 50 * 3;
+    private SensorManager sensorManager;
+    private static float[] accData = new float[BUFFER_SIZE + 1];
+    private static int accCount = 0;
 
     private static final String MODEL_FILE = "file:///android_asset/example_graph_1.pb";
     private static final String LABEL_FILE =
@@ -70,11 +75,13 @@ public class CameraActivity extends Activity implements View.OnClickListener, Se
         if (v.getId() == R.id.button1) {
             sensorManager = (SensorManager) getSystemService(SENSOR_SERVICE);
             Sensor mAcc = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
-            sensorManager.registerListener(this, mAcc, SensorManager.SENSOR_DELAY_UI);
+            sensorManager.registerListener(this, mAcc, SensorManager.SENSOR_DELAY_GAME);
+            Log.i(TAG, "start clicked");
         }
 
         // Stop sensor sampling
         if (v.getId() == R.id.button2) {
+            Log.i(TAG, "stop clicked");
             sensorManager.unregisterListener(this);
             sensorManager = null;
         }
@@ -90,9 +97,29 @@ public class CameraActivity extends Activity implements View.OnClickListener, Se
 
     @Override
     public void onSensorChanged(SensorEvent event) {
+        // Log.i(TAG, "sensor data received");
         mAccViewX.setText("Acc X = " + event.values[0]);
         mAccViewY.setText("Acc Y = " + event.values[1]);
         mAccViewZ.setText("Acc Z = " + event.values[2]);
+
+        // Save data in buffer
+        accData[accCount] = event.values[0];
+        accData[accCount + 1] = event.values[1];
+        accData[accCount + 2] = event.values[2];
+        accCount += 3;
+
+        // Classify once we have enough data
+        if (accCount >= BUFFER_SIZE) {
+            Log.i(TAG, "buffer full, len =  " + accCount);
+            float[] data = new float[accCount];
+            for (int i = 0; i < accCount; i++) {
+                data[i] = accData[i];
+                accData[i] = 0;
+            }
+            accCount = 0;
+            final int res = tensorflow.recognizeActivity(data.length, data);
+            Log.i(TAG, "Classification result = " + res);
+        }
     }
 
     @Override
