@@ -17,12 +17,14 @@
 package org.tensorflow.demo;
 
 import android.app.Activity;
+import android.graphics.Camera;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.os.AsyncTask;
 import android.os.Bundle;
+import android.os.Handler;
 import android.util.Log;
 import android.view.View;
 import android.view.WindowManager;
@@ -35,6 +37,7 @@ public class CameraActivity extends Activity implements View.OnClickListener, Se
 
     private static final int BUFFER_SIZE = 50 * 3;
     private SensorManager sensorManager;
+    private Sensor mAcc;
     private static float[] accData = new float[BUFFER_SIZE + 1];
     private static int accCount = 0;
 
@@ -65,6 +68,10 @@ public class CameraActivity extends Activity implements View.OnClickListener, Se
         mAccViewY = (TextView) findViewById(R.id.textView2);
         mAccViewZ = (TextView) findViewById(R.id.textView3);
 
+        // SensorManager and Accelerometer
+        sensorManager = (SensorManager) getSystemService(SENSOR_SERVICE);
+        mAcc = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
+
         // Initialize tensorflow model
         tensorflow.initializeTensorflow(
                 getAssets(), MODEL_FILE, LABEL_FILE, 4, 50, 3);
@@ -74,19 +81,14 @@ public class CameraActivity extends Activity implements View.OnClickListener, Se
     public void onClick(View v) {
         // Start sensor sampling
         if (v.getId() == R.id.button1) {
-            sensorManager = (SensorManager) getSystemService(SENSOR_SERVICE);
-            Sensor mAcc = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
-            sensorManager.registerListener(this, mAcc, SensorManager.SENSOR_DELAY_GAME);
             Log.i(TAG, "start clicked");
+            mHandler.postDelayed(mSamplingRunnable, INTERVAL);
         }
 
         // Stop sensor sampling
         if (v.getId() == R.id.button2) {
             Log.i(TAG, "stop clicked");
-            if (sensorManager != null) {
-                sensorManager.unregisterListener(this);
-                sensorManager = null;
-            }
+            mHandler.removeCallbacks(mSamplingRunnable);
         }
     }
 
@@ -95,6 +97,7 @@ public class CameraActivity extends Activity implements View.OnClickListener, Se
         super.onPause();
         if (sensorManager != null) {
             sensorManager.unregisterListener(this);
+            sensorManager = null;
         }
     }
 
@@ -113,7 +116,7 @@ public class CameraActivity extends Activity implements View.OnClickListener, Se
 
         // Classify once we have enough data
         if (accCount >= BUFFER_SIZE) {
-//            sensorManager.unregisterListener(CameraActivity.this);
+            sensorManager.unregisterListener(CameraActivity.this);
             Log.i(TAG, "buffer full, len =  " + accCount);
             final float[] data = new float[accCount];
             for (int i = 0; i < accCount; i++) {
@@ -137,4 +140,15 @@ public class CameraActivity extends Activity implements View.OnClickListener, Se
     public void onAccuracyChanged(Sensor sensor, int accuracy) {
 
     }
+
+    // Duty-cycle execution of sensing and classification
+    private static final int INTERVAL = 5000;
+    private Handler mHandler = new Handler();
+    private Runnable mSamplingRunnable = new Runnable() {
+        @Override
+        public void run() {
+            sensorManager.registerListener(CameraActivity.this, mAcc, SensorManager.SENSOR_DELAY_GAME);
+            mHandler.postDelayed(this, INTERVAL);
+        }
+    };
 }
