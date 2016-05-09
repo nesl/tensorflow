@@ -48,9 +48,14 @@ static std::vector<std::string> g_label_strings({"still", "walking", "running", 
 static bool g_compute_graph_initialized = false;
 //static mutex g_compute_graph_mutex(base::LINKER_INITIALIZED);
 
-static int g_tensorflow_input_size;  // The image size for the mognet input.
-static int g_image_mean;  // The image mean.
+// static int g_tensorflow_input_size;  // The image size for the mognet input.
+// static int g_image_mean;  // The image mean.
 static std::unique_ptr<StatSummarizer> g_stats;
+static int g_tensorflow_n_steps;  // The n_steps for acc input.
+static int g_tensorflow_n_input;  // The n_input for acc input.
+static int g_tensorflow_n_classes;
+static int g_tensorflow_n_hidden = 128;
+static int g_tensorflow_n_layer = 3;
 
 // For basic benchmarking.
 static int g_num_runs = 0;
@@ -76,11 +81,8 @@ static Stat<int64> g_frequency_end;
 // static const bool kSaveStepStats = false;
 // #endif
 
-static const bool kLogDetailedStats = true;
-static const bool kSaveStepStats = true;
-
-// Output name of tensors
-static std::vector<std::string> output_names;
+static const bool kLogDetailedStats = false;
+static const bool kSaveStepStats = false;
 
 inline static int64 CurrentThreadTimeUs() {
   struct timeval tv;
@@ -92,9 +94,10 @@ JNIEXPORT jint JNICALL
 TENSORFLOW_METHOD(initializeTensorflow)(
     JNIEnv* env, jobject thiz, jobject java_asset_manager,
     jstring model, jstring labels,
-    jint num_classes, jint mognet_input_size, jint image_mean) {
+    jint num_classes, jint n_steps, jint n_input) {
 
   LOG(INFO) << "In jni initializeTensorflow";
+  LOG(INFO) << "n_steps=" << n_steps << ", n_input=" << n_input;
 
   g_num_runs = 0;
   g_timing_total_us = 0;
@@ -112,8 +115,9 @@ TENSORFLOW_METHOD(initializeTensorflow)(
   const char* const model_cstr = env->GetStringUTFChars(model, NULL);
   // const char* const labels_cstr = env->GetStringUTFChars(labels, NULL);
 
-  g_tensorflow_input_size = mognet_input_size;
-  g_image_mean = image_mean;
+  g_tensorflow_n_input = n_input;
+  g_tensorflow_n_steps = n_steps; 
+  g_tensorflow_n_classes = num_classes;
 
   LOG(INFO) << "Loading Tensorflow.";
 
@@ -144,18 +148,26 @@ TENSORFLOW_METHOD(initializeTensorflow)(
     return -1;
   }
 
+  std::vector<tensorflow::Tensor> tf_output;
+  std::vector<std::string> output_names;
+
   // Print node count in the graph
   int node_count = tensorflow_graph.node_size();
   LOG(INFO) << node_count << " nodes in graph";
 
-  // Iterate all nodes to find tensor names
+  // Iterate all nodes to restore weights
   for(int i = 0; i < node_count; i++) {
       auto n = tensorflow_graph.node(i);
-      // If name contains "assign_variables", add to vector
-      if(n.name().find("assign_variables") != std::string::npos) {
+      // If name contains "tf_weights", add to vector
+      if(n.name().find("tf_weights") != std::string::npos) {
           LOG(INFO) << i << ":" << n.name();
           output_names.push_back(n.name());
       }
+  }
+  s = session->Run({}, output_names, {}, &tf_output);
+  if (!s.ok()) {
+    LOG(ERROR) << "Could not restore graph weights: " << s;
+    return -1;
   }
 
   // Clear the proto to save memory space.
@@ -175,15 +187,6 @@ TENSORFLOW_METHOD(initializeTensorflow)(
 
   return 0;
 }
-
-namespace {
-typedef struct {
-  uint8 red;
-  uint8 green;
-  uint8 blue;
-  uint8 alpha;
-} RGBA;
-}  // namespace
 
 // Returns the top N confidence values over threshold in the provided vector,
 // sorted by confidence in descending order.
@@ -234,170 +237,6 @@ static int64 GetCpuSpeed() {
   return result;
 }
 
-static std::string ClassifyImage(const RGBA* const bitmap_src,
-                                 const int in_stride,
-                                 const int width, const int height) {
-  // Force the app to quit if we've reached our run quota, to make
-  // benchmarks more reproducible.
-  if (MAX_NUM_RUNS > 0 && g_num_runs >= MAX_NUM_RUNS) {
-    LOG(INFO) << "Benchmark complete. "
-              << (g_timing_total_us / g_num_runs / 1000) << "ms/run avg over "
-              << g_num_runs << " runs.";
-    LOG(INFO) << "";
-    exit(0);
-  }
-
-  ++g_num_runs;
-
-  // Create input tensor
-  tensorflow::Tensor input_tensor(
-      tensorflow::DT_FLOAT,
-      tensorflow::TensorShape({
-          1, g_tensorflow_input_size, g_tensorflow_input_size, 3}));
-
-  auto input_tensor_mapped = input_tensor.tensor<float, 4>();
-
-  LOG(INFO) << "Tensorflow: Copying Data.";
-  for (int i = 0; i < g_tensorflow_input_size; ++i) {
-    const RGBA* src = bitmap_src + i * g_tensorflow_input_size;
-    for (int j = 0; j < g_tensorflow_input_size; ++j) {
-       // Copy 3 values
-      input_tensor_mapped(0, i, j, 0) =
-          static_cast<float>(src->red) - g_image_mean;
-      input_tensor_mapped(0, i, j, 1) =
-          static_cast<float>(src->green) - g_image_mean;
-      input_tensor_mapped(0, i, j, 2) =
-          static_cast<float>(src->blue) - g_image_mean;
-      ++src;
-    }
-  }
-
-  std::vector<std::pair<std::string, tensorflow::Tensor> > input_tensors(
-      {{"input:0", input_tensor}});
-
-  VLOG(0) << "Start computing.";
-  std::vector<tensorflow::Tensor> output_tensors;
-
-  tensorflow::Status s;
-  int64 start_time, end_time;
-
-  if (kLogDetailedStats || kSaveStepStats) {
-    RunOptions run_options;
-    run_options.set_trace_level(RunOptions::FULL_TRACE);
-    RunMetadata run_metadata;
-    g_frequency_start.UpdateStat(GetCpuSpeed());
-    start_time = CurrentThreadTimeUs();
-    s = session->Run(run_options, input_tensors, output_names, {},
-                     &output_tensors, &run_metadata);
-    end_time = CurrentThreadTimeUs();
-    g_frequency_end.UpdateStat(GetCpuSpeed());
-    assert(run_metadata.has_step_stats());
-
-    const StepStats& stats = run_metadata.step_stats();
-
-    if (kLogDetailedStats) {
-      LOG(INFO) << "CPU frequency start: " << g_frequency_start;
-      LOG(INFO) << "CPU frequency end:   " << g_frequency_end;
-      g_stats->ProcessStepStats(stats);
-      g_stats->PrintStepStats();
-    }
-
-    if (kSaveStepStats) {
-      mkdir("/sdcard/tf/", 0755);
-      const string filename =
-          strings::Printf("/sdcard/tf/stepstats%05d.pb", g_num_runs);
-      WriteProtoToFile(filename.c_str(), stats);
-    }
-  } else {
-    start_time = CurrentThreadTimeUs();
-    s = session->Run(input_tensors, output_names, {}, &output_tensors);
-    end_time = CurrentThreadTimeUs();
-  }
-  const int64 elapsed_time_inf = end_time - start_time;
-  g_timing_total_us += elapsed_time_inf;
-  VLOG(0) << "End computing. Ran in " << elapsed_time_inf / 1000 << "ms ("
-          << (g_timing_total_us / g_num_runs / 1000) << "ms avg over "
-          << g_num_runs << " runs)";
-
-  if (!s.ok()) {
-    LOG(ERROR) << "Error during inference: " << s;
-    return "";
-  }
-
-  VLOG(0) << "Reading from layer " << output_names[0];
-  tensorflow::Tensor* output = &output_tensors[0];
-  const int kNumResults = 5;
-  const float kThreshold = 0.1f;
-  std::vector<std::pair<float, int> > top_results;
-  GetTopN(output->flat<float>(), kNumResults, kThreshold, &top_results);
-
-  std::stringstream ss;
-  ss.precision(3);
-  for (const auto& result : top_results) {
-    const float confidence = result.first;
-    const int index = result.second;
-
-    ss << index << " " << confidence << " ";
-
-    // Write out the result as a string
-    if (index < g_label_strings.size()) {
-      // just for safety: theoretically, the output is under 1000 unless there
-      // is some numerical issues leading to a wrong prediction.
-      ss << g_label_strings[index];
-    } else {
-      ss << "Prediction: " << index;
-    }
-
-    ss << "\n";
-  }
-
-  LOG(INFO) << "Predictions: " << ss.str();
-  return ss.str();
-}
-
-JNIEXPORT jstring JNICALL
-TENSORFLOW_METHOD(classifyImageRgb)(
-    JNIEnv* env, jobject thiz, jintArray image, jint width, jint height) {
-  // Copy image into currFrame.
-  jboolean iCopied = JNI_FALSE;
-  jint* pixels = env->GetIntArrayElements(image, &iCopied);
-
-  std::string result = ClassifyImage(
-      reinterpret_cast<const RGBA*>(pixels), width * 4, width, height);
-
-  env->ReleaseIntArrayElements(image, pixels, JNI_ABORT);
-
-  return env->NewStringUTF(result.c_str());
-}
-
-JNIEXPORT jstring JNICALL
-TENSORFLOW_METHOD(classifyImageBmp)(
-    JNIEnv* env, jobject thiz, jobject bitmap) {
-  // Obtains the bitmap information.
-  AndroidBitmapInfo info;
-  CHECK_EQ(AndroidBitmap_getInfo(env, bitmap, &info),
-           ANDROID_BITMAP_RESULT_SUCCESS);
-  void* pixels;
-  CHECK_EQ(AndroidBitmap_lockPixels(env, bitmap, &pixels),
-           ANDROID_BITMAP_RESULT_SUCCESS);
-  LOG(INFO) << "Image dimensions: " << info.width << "x" << info.height
-            << " stride: " << info.stride;
-  // TODO(jiayq): deal with other formats if necessary.
-  if (info.format != ANDROID_BITMAP_FORMAT_RGBA_8888) {
-    return env->NewStringUTF(
-        "Error: Android system is not using RGBA_8888 in default.");
-  }
-
-  std::string result = ClassifyImage(
-      static_cast<const RGBA*>(pixels), info.stride, info.width, info.height);
-
-  // Finally, unlock the pixels
-  CHECK_EQ(AndroidBitmap_unlockPixels(env, bitmap),
-           ANDROID_BITMAP_RESULT_SUCCESS);
-
-  return env->NewStringUTF(result.c_str());
-}
-
 JNIEXPORT jint JNICALL
 TENSORFLOW_METHOD(classifyActivityAccRaw)(
     JNIEnv* env, jobject thiz, jint len, jfloatArray acc) {
@@ -408,5 +247,62 @@ TENSORFLOW_METHOD(classifyActivityAccRaw)(
 
   LOG(INFO) << "In classifyActivityAccRaw: " << len;
 
-  return 1;
+  // Create input tensor
+  tensorflow::Tensor tensor_data(
+      tensorflow::DT_FLOAT,
+      tensorflow::TensorShape({1, g_tensorflow_n_steps, g_tensorflow_n_input}));
+  tensorflow::Tensor tensor_label(
+    tensorflow::DT_FLOAT,
+    tensorflow::TensorShape({1, g_tensorflow_n_classes}));
+  tensorflow::Tensor tensor_state(
+    tensorflow::DT_FLOAT,
+    tensorflow::TensorShape({1, 2 * g_tensorflow_n_layer * g_tensorflow_n_hidden}));
+
+  LOG(INFO) << "Tensorflow: Copying Data.";
+  auto tensor_data_mapped = tensor_data.tensor<float, 3>();
+  for (int i = 0; i < g_tensorflow_n_steps; ++i) {
+    for (int j = 0; j < g_tensorflow_n_input; ++j) {
+      tensor_data_mapped(0, i, j) = data[i * g_tensorflow_n_input + j];
+    }
+  }
+  auto tensor_label_mapped = tensor_label.tensor<float, 2>();
+  tensor_label_mapped(0, 0) = 1.0;
+ 
+  std::vector<std::pair<std::string, tensorflow::Tensor> > input_tensors(
+      {{"tf_data", tensor_data}, {"tf_state", tensor_state}, {"tf_label", tensor_label}});
+
+  VLOG(0) << "Start computing.";
+  std::vector<tensorflow::Tensor> output_tensors;
+
+  tensorflow::Status s;
+  int64 start_time, end_time;
+
+  start_time = CurrentThreadTimeUs();
+  s = session->Run(input_tensors, {"tf_rnn_5"}, {}, &output_tensors);
+  end_time = CurrentThreadTimeUs();
+  
+  const int64 elapsed_time_inf = end_time - start_time;
+  g_timing_total_us += elapsed_time_inf;
+  VLOG(0) << "End computing. Ran in " << elapsed_time_inf / 1000 << "ms ("
+          << (g_timing_total_us / g_num_runs / 1000) << "ms avg over "
+          << g_num_runs << " runs)";
+
+  if (!s.ok()) {
+    LOG(ERROR) << "Error during inference: " << s;
+    return -1;
+  }
+
+  int res = -1;
+  int max = 0;
+  VLOG(0) << "Reading output tensor";
+  auto tensor_output_mapped = output_tensors[0].tensor<float, 2>();
+  for(int i = 0; i < g_tensorflow_n_classes; ++i) {
+    LOG(INFO) << "class " << i << ": " << tensor_output_mapped(0, i);
+    if (tensor_output_mapped(0, i) > max) {
+      max = tensor_output_mapped(0, i);
+      res = i;
+    }
+  }
+
+  return res;
 }

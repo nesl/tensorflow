@@ -37,7 +37,7 @@ public class CameraActivity extends Activity implements View.OnClickListener, Se
     private static float[] accData = new float[BUFFER_SIZE + 1];
     private static int accCount = 0;
 
-    private static final String MODEL_FILE = "file:///android_asset/example_graph_1.pb";
+    private static final String MODEL_FILE = "file:///android_asset/graph_def_0508.pb";
     private static final String LABEL_FILE =
             "file:///android_asset/imagenet_comp_graph_label_strings.txt";
     private final TensorflowClassifier tensorflow = new TensorflowClassifier();
@@ -66,7 +66,7 @@ public class CameraActivity extends Activity implements View.OnClickListener, Se
 
         // Initialize tensorflow model
         tensorflow.initializeTensorflow(
-                getAssets(), MODEL_FILE, LABEL_FILE, 4, 10, 10);
+                getAssets(), MODEL_FILE, LABEL_FILE, 4, 50, 3);
     }
 
     @Override
@@ -82,8 +82,10 @@ public class CameraActivity extends Activity implements View.OnClickListener, Se
         // Stop sensor sampling
         if (v.getId() == R.id.button2) {
             Log.i(TAG, "stop clicked");
-            sensorManager.unregisterListener(this);
-            sensorManager = null;
+            if (sensorManager != null) {
+                sensorManager.unregisterListener(this);
+                sensorManager = null;
+            }
         }
     }
 
@@ -119,6 +121,8 @@ public class CameraActivity extends Activity implements View.OnClickListener, Se
             accCount = 0;
             final int res = tensorflow.recognizeActivity(data.length, data);
             Log.i(TAG, "Classification result = " + res);
+
+            sensorManager.unregisterListener(CameraActivity.this);
         }
     }
 

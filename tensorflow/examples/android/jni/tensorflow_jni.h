@@ -34,15 +34,15 @@ JNIEXPORT jint JNICALL
 TENSORFLOW_METHOD(initializeTensorflow)(
     JNIEnv* env, jobject thiz, jobject java_asset_manager,
     jstring model, jstring labels,
-    jint num_classes, jint mognet_input_size, jint image_mean);
+    jint num_classes, jint n_steps, jint n_input);
 
-JNIEXPORT jstring JNICALL
-TENSORFLOW_METHOD(classifyImageBmp)(
-    JNIEnv* env, jobject thiz, jobject bitmap);
+// JNIEXPORT jstring JNICALL
+// TENSORFLOW_METHOD(classifyImageBmp)(
+//     JNIEnv* env, jobject thiz, jobject bitmap);
 
-JNIEXPORT jstring JNICALL
-TENSORFLOW_METHOD(classifyImageRgb)(
-    JNIEnv* env, jobject thiz, jintArray image, jint width, jint height);
+// JNIEXPORT jstring JNICALL
+// TENSORFLOW_METHOD(classifyImageRgb)(
+//     JNIEnv* env, jobject thiz, jintArray image, jint width, jint height);
 
 JNIEXPORT jint JNICALL
 TENSORFLOW_METHOD(classifyActivityAccRaw)(
