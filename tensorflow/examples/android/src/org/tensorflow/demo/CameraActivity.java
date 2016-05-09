@@ -21,6 +21,7 @@ import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
+import android.os.AsyncTask;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.View;
@@ -112,17 +113,23 @@ public class CameraActivity extends Activity implements View.OnClickListener, Se
 
         // Classify once we have enough data
         if (accCount >= BUFFER_SIZE) {
+//            sensorManager.unregisterListener(CameraActivity.this);
             Log.i(TAG, "buffer full, len =  " + accCount);
-            float[] data = new float[accCount];
+            final float[] data = new float[accCount];
             for (int i = 0; i < accCount; i++) {
                 data[i] = accData[i];
                 accData[i] = 0;
             }
             accCount = 0;
-            final int res = tensorflow.recognizeActivity(data.length, data);
-            Log.i(TAG, "Classification result = " + res);
 
-            sensorManager.unregisterListener(CameraActivity.this);
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    final int res = tensorflow.recognizeActivity(data.length, data);
+                    Log.i(TAG, "Classification result = " + res);
+                }
+            }).start();
+
         }
     }
 
